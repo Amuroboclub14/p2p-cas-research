@@ -12,10 +12,10 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "hash":
-        print(f"\nHashing file: {args.file}")
-        file_hash = hash_manager.hash_file(args.file)
-        print(f"SHA-256 Hash:\n{file_hash}")
+    if args.command == "store":
+        print(f"\nStoring file: {args.file}")
+        file_hash = hash_manager.store_file(args.file, args.storage_dir)
+        print(f"File stored with hash:\n{file_hash}")
     else:
         parser.print_help()
 

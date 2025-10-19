@@ -33,7 +33,3 @@ def store_file(path, storage_dir):
     return h
 
 
-storage_dir = "cas_storage"
-filepath = "testfiles/test.txt"  # Replace with your assigned file
-file_hash = store_file(filepath, storage_dir)
-print(f"Stored file with hash: {file_hash}")
