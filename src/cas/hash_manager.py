@@ -31,3 +31,9 @@ def store_file(path, storage_dir):
             outfile.write(infile.read())
         # Update index.json logic here
     return h
+
+
+storage_dir = "cas_storage"
+filepath = "testfiles/test.txt"  # Replace with your assigned file
+file_hash = store_file(filepath, storage_dir)
+print(f"Stored file with hash: {file_hash}")
