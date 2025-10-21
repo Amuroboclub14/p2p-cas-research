@@ -15,7 +15,7 @@ def main():
 
     if args.command == "store":
         print(f"\nStoring file: {args.file}")
-        storage_dir = "cas_storage"
+        storage_dir = "storage/hashed_files"
         file_hash = hash_manager.store_file(args.file, storage_dir)
         print(f"File stored with hash:\n{file_hash}")
     else:

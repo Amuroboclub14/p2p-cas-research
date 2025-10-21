@@ -1,3 +1,8 @@
+# p2p-cas
+storage/hashed_files
+
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
