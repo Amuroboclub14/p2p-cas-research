@@ -11,17 +11,20 @@ def hash_file(filepath, chunk_size=65536):
     read_so_far = 0
     sha256 = hashlib.sha256()
     chunk_hashes = []
+    chunks_data=[]
     with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(chunk_size), b""):
             sha256.update(chunk)
-            chunk_hashes.append(hashlib.sha256(chunk).hexdigest())  
+            chunk_hash=hashlib.sha256(chunk).hexdigest()
+            chunk_hashes.append(chunk_hash)  
+            chunks_data.append((chunk_hash,chunk))
             read_so_far += len(chunk)
             percent = (read_so_far / total_size) * 100
             sys.stdout.write(f"\rHashing: {percent:.2f}%")
             sys.stdout.flush()
 
     print("\nDone.")
-    return sha256.hexdigest(),chunk_hashes
+    return sha256.hexdigest(),chunk_hashes,chunks_data
 
 
 """def store_file(path, storage_dir):
@@ -64,7 +67,7 @@ def store_file(path, storage_dir, chunk_size=65536):
         str: The SHA-256 hash of the stored file
     """
     # Hash file and get chunk hashes
-    h, chunk_hashes = hash_file(path, chunk_size)
+    h, chunk_hashes,chunks_data = hash_file(path, chunk_size)
     outpath = os.path.join(storage_dir, h)
     
     # Create storage directory if it doesn't exist
@@ -76,12 +79,19 @@ def store_file(path, storage_dir, chunk_size=65536):
     # Store the file if it doesn't exist
     file_already_exists = os.path.exists(outpath)
     if not file_already_exists:
-        with open(path, "rb") as infile, open(outpath, "wb") as outfile:
-            outfile.write(infile.read())
+        '''with open(path, "rb") as infile, open(outpath, "wb") as outfile:
+            outfile.write(infile.read())'''
         print(f"\n✓ Stored new file: {h}")
     else:
         print(f"\n✓ File already exists in storage: {h}")
-    
+
+    for chunk_hash, chunk_data in chunks_data:
+        chunk_path= os.path.join(storage_dir, chunk_hash)
+        if not os.path.exists(chunk_path):
+            with open(chunk_path, "wb") as f:
+                f.write(chunk_data)
+    print(f"Stored {len(chunks_data)} chunks in {storage_dir}")
+
     file_stat = os.stat(path) 
     original_name = os.path.basename(path)  
     current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
