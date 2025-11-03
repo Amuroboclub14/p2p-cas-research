@@ -57,61 +57,67 @@ def load_index(storage_dir):
 def store_file(path, storage_dir, chunk_size=65536):
     """
     Store file in CAS and maintain metadata in cas_index.json
-    
-    Args:
-        path: Path to the file to store
-        storage_dir: Directory where files and index will be stored
-        chunk_size: Size of chunks for hashing (default: 65536 bytes)
-    
-    Returns:
-        str: The SHA-256 hash of the stored file
+    Includes deduplication to avoid storing duplicate chunks.
     """
     # Hash file and get chunk hashes
-    h, chunk_hashes,chunks_data = hash_file(path, chunk_size)
+    h, chunk_hashes, chunks_data = hash_file(path, chunk_size)
     outpath = os.path.join(storage_dir, h)
     
-    # Create storage directory if it doesn't exist
     os.makedirs(storage_dir, exist_ok=True)
     
-    # Load existing index
+    # Load existing metadata index
     index = load_index(storage_dir)
     
-    # Store the file if it doesn't exist
+    # Check if file already exists
     file_already_exists = os.path.exists(outpath)
     if not file_already_exists:
-        '''with open(path, "rb") as infile, open(outpath, "wb") as outfile:
-            outfile.write(infile.read())'''
-        print(f"\n✓ Stored new file: {h}")
+        print(f"\n✓ Storing new file: {h}")
     else:
         print(f"\n✓ File already exists in storage: {h}")
 
-    for chunk_hash, chunk_data in chunks_data:
-        chunk_path= os.path.join(storage_dir, chunk_hash)
-        if not os.path.exists(chunk_path):
-            with open(chunk_path, "wb") as f:
-                f.write(chunk_data)
-    print(f"Stored {len(chunks_data)} chunks in {storage_dir}")
+    # --- 🧠 Deduplication logic starts here ---
+    skipped_chunks = 0
+    new_chunks = 0
 
-    file_stat = os.stat(path) 
-    original_name = os.path.basename(path)  
+    for chunk_hash, chunk_data in chunks_data:
+        chunk_path = os.path.join(storage_dir, chunk_hash)
+
+        # ✅ If this chunk already exists, skip storing it again
+        if os.path.exists(chunk_path):
+            skipped_chunks += 1
+            continue  # don’t rewrite the same chunk
+
+        # ✅ Otherwise, save the chunk
+        with open(chunk_path, "wb") as f:
+            f.write(chunk_data)
+        new_chunks += 1
+
+    print(f"✓ Stored {new_chunks} new chunks, skipped {skipped_chunks} existing chunks")
+    # --- 🧠 Deduplication logic ends here ---
+
+    # Gather file stats for metadata
+    file_stat = os.stat(path)
+    original_name = os.path.basename(path)
     current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
-    # Update or create metadata entry in dictionary
+
+    # --- Update or create metadata entry ---
     if h in index:
-        # File hash exists - update metadata
         names_list = index[h].get("names", [])
         if original_name not in names_list:
             names_list.append(original_name)
         
-        index[h]["names"] = names_list
-        index[h]["chunks"] = chunk_hashes           
-        index[h]["chunk_count"] = len(chunk_hashes) 
-        index[h]["chunk_size"] = chunk_size     
-        index[h]["last_accessed"] = current_time    
+        index[h].update({
+            "names": names_list,
+            "chunks": chunk_hashes,
+            "chunk_count": len(chunk_hashes),
+            "chunk_size": chunk_size,
+            "last_accessed": current_time
+        })
         if "stored_at" not in index[h]:
-            index[h]["stored_at"] = current_time    
+            index[h]["stored_at"] = current_time
         print(f"✓ Updated metadata for existing file")
+
     else:
-        # New file - create complete metadata entry
         index[h] = {
             "hash": h,
             "original_name": original_name,
@@ -125,8 +131,8 @@ def store_file(path, storage_dir, chunk_size=65536):
         }
         print(f"✓ Created new metadata entry")
     
-    # Save updated index
+    # Save updated metadata
     save_index(storage_dir, index)
     print(f"✓ Metadata saved to: {os.path.join(storage_dir, 'cas_index.json')}")
-    
+
     return h
