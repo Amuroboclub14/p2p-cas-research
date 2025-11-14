@@ -5,6 +5,7 @@ storage/hashed_files
 __pycache__/
 *.py[codz]
 *$py.class
+*.DS_Store
 
 # C extensions
 *.so
