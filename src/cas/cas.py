@@ -1,5 +1,6 @@
-import hashlib, os, sys, json
+import hashlib, os, sys, json, shutil
 from datetime import datetime
+
 
 # def hash_file(path):
 #     with open(path, 'rb') as f:
@@ -140,11 +141,6 @@ def store_file(path, storage_dir, chunk_size=65536):
     print(f"✓ Metadata saved to: {os.path.join(storage_dir, 'cas_index.json')}")
 
     return h
-
-
-import os
-import shutil
-from datetime import datetime
 
 
 def retrieve_file(
