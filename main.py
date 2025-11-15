@@ -19,6 +19,9 @@ def main():
         "--force", action="store_true", help="Overwrite output file if it exists"
     )
 
+    # list command
+    list_parser = subparsers.add_parser("list", help="List all files in CAS")
+
     args = parser.parse_args()
 
     if args.command == "store":
@@ -26,6 +29,7 @@ def main():
         storage_dir = "storage/hashed_files"
         file_hash = cas.store_file(args.file, storage_dir)
         print(f"File stored with hash:\n{file_hash}")
+
     elif args.command == "retrieve":
         try:
             success = cas.retrieve_file(args.hash, args.output, overwrite=args.force)
@@ -38,6 +42,11 @@ def main():
         except Exception as e:
             print(f"Error retrieving file: {e}")
             return 1
+
+    elif args.command == "list":
+        storage_dir = "storage/hashed_files"
+        cas.list_files(storage_dir)
+
     else:
         parser.print_help()
 
