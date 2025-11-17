@@ -269,3 +269,30 @@ def retrieve_file(
         except Exception:
             pass
         return False
+def list_files(storage_dir="storage/hashed_files"):
+    """
+    List all files stored in CAS using cas_index.json
+    """
+    index = load_index(storage_dir)
+
+    if not index:
+        print("No files stored in CAS.")
+        return
+
+    print("\nStored Files in CAS:")
+    print("-" * 60)
+
+    for file_hash, metadata in index.items():
+        name = metadata.get("original_name", "<unknown>")
+        size = metadata.get("size", 0)
+        chunk_count = metadata.get("chunk_count", len(metadata.get("chunks", [])))
+        stored_at = metadata.get("stored_at", "<unknown>")
+        last_accessed = metadata.get("last_accessed", "<unknown>")
+
+        print(f"File: {name}")
+        print(f" Hash:          {file_hash}")
+        print(f" Size:          {size} bytes")
+        print(f" Chunks:        {chunk_count}")
+        print(f" Stored At:     {stored_at}")
+        print(f" Last Accessed: {last_accessed}")
+        print("-" * 60)
