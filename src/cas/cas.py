@@ -279,3 +279,39 @@ def list_files(storage_dir="storage/hashed_files"):
         print(f" Stored At:     {stored_at}")
         print(f" Last Accessed: {last_accessed}")
         print("-" * 60)
+
+def verify_integrity(storage_dir):
+    """
+    Simple integrity checker:
+    - Loads cas_index.json
+    - Checks if all chunk files listed in metadata exist in storage_dir
+    - Prints missing chunks
+    - Returns dictionary of {file_hash: True/False}
+    """
+
+    print("Verifying integrity of all stored files...")
+
+    index = load_index(storage_dir)
+    results = {}
+
+    for file_hash, metadata in index.items():
+        print(f"\nChecking {metadata['original_name']}...")
+
+        chunk_hashes = metadata["chunks"]
+        missing_chunks = []
+
+        for chunk_hash in chunk_hashes:
+            chunk_path= os.path.join(storage_dir, chunk_hash)
+
+            if not os.path.exists(chunk_path):
+                missing_chunks.append(chunk_hash)
+
+        if missing_chunks:
+            print(f"  ✗ Missing chunks: {missing_chunks}")
+            results[file_hash]=False
+        else:
+            print("  ✓ All chunks present")
+            results[file_hash]= True
+
+    return results # In results we are making a dictionary whose keys are  hash of file and values are true/false if file has missing chunk its value is false else true
+
