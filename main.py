@@ -18,7 +18,9 @@ def main():
     retrieve_parser.add_argument(
         "--force", action="store_true", help="Overwrite output file if it exists"
     )
-
+    # verify command
+    verify_parser = subparsers.add_parser("verify", help="Verify integrity of a stored file")
+    verify_parser.add_argument("hash", help="Hash of the file to verify")
     # list command
     list_parser = subparsers.add_parser("list", help="List all files in CAS")
 
@@ -46,6 +48,21 @@ def main():
     elif args.command == "list":
         storage_dir = "storage/hashed_files"
         cas.list_files(storage_dir)
+
+    elif args.command == "verify":
+        storage_dir = "storage/hashed_files"
+        result = cas.verify_integrity(storage_dir, args.hash)
+
+        if result is True:
+            print("\n✓ File integrity OK")
+            return 0
+        elif result is False:
+            print("\n✗ File is corrupted or missing chunks")
+            return 1
+        else:
+            print("\n✗ File hash not found")
+            return 1
+
 
     else:
         parser.print_help()
