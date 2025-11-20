@@ -74,7 +74,7 @@ def server_input():
                 with clients_lock:
                     for client_conn, client_addr in clients:
                         try:
-                            client_conn.send(f"[SERVER]: {msg}".encode())
+                            client_conn.send(f"{msg}".encode())
                         except Exception as e:
                             print(f"[ERROR] Failed to send to {client_addr}: {e}")
         except EOFError:
