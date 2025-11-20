@@ -34,8 +34,7 @@ def handle_client(conn, addr):
                 print(f"[INFO] Client {addr} disconnected")
                 break
             print(f"[CLIENT {addr}]: {msg}")
-            # Broadcast to all other clients
-            broadcast_message(f"[CLIENT {addr}]: {msg}", addr)
+
     except Exception as e:
         print(f"[ERROR] Client {addr}: {e}")
     finally:
@@ -69,13 +68,15 @@ def server_input():
             if msg.lower() == "quit":
                 print("[INFO] Server shutting down...")
                 sys.exit(0)
-            # Broadcast server message to all clients
-            with clients_lock:
-                for client_conn, client_addr in clients:
-                    try:
-                        client_conn.send(f"[SERVER]: {msg}".encode())
-                    except Exception as e:
-                        print(f"[ERROR] Failed to send to {client_addr}: {e}")
+            # Skip empty messages
+            if msg.strip():
+                # Broadcast server message to all clients
+                with clients_lock:
+                    for client_conn, client_addr in clients:
+                        try:
+                            client_conn.send(f"[SERVER]: {msg}".encode())
+                        except Exception as e:
+                            print(f"[ERROR] Failed to send to {client_addr}: {e}")
         except EOFError:
             break
         except Exception as e:
