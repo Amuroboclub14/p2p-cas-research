@@ -280,38 +280,41 @@ def list_files(storage_dir="storage/hashed_files"):
         print(f" Last Accessed: {last_accessed}")
         print("-" * 60)
 
-def verify_integrity(storage_dir):
+def verify_integrity(storage_dir, file_hash):
     """
-    Simple integrity checker:
+    Verify integrity of a single file:
     - Loads cas_index.json
-    - Checks if all chunk files listed in metadata exist in storage_dir
-    - Prints missing chunks
-    - Returns dictionary of {file_hash: True/False}
+    - Checks if all chunks of the given file_hash exist
+    - Returns True/False
     """
 
-    print("Verifying integrity of all stored files...")
+    print(f"Verifying integrity for file hash: {file_hash}")
 
     index = load_index(storage_dir)
-    results = {}
 
-    for file_hash, metadata in index.items():
-        print(f"\nChecking {metadata['original_name']}...")
+    # file_hash not found in index
+    if file_hash not in index:
+        print("✗ File hash not found in index.")
+        return None
 
-        chunk_hashes = metadata["chunks"]
-        missing_chunks = []
+    metadata = index[file_hash]
+    chunk_hashes = metadata["chunks"]
 
-        for chunk_hash in chunk_hashes:
-            chunk_path= os.path.join(storage_dir, chunk_hash)
+    print(f"File: {metadata['original_name']}")
+    missing_chunks = []
 
-            if not os.path.exists(chunk_path):
-                missing_chunks.append(chunk_hash)
+    # check each chunk
+    for chunk_hash in chunk_hashes:
+        chunk_path = os.path.join(storage_dir, chunk_hash)
 
-        if missing_chunks:
-            print(f"  ✗ Missing chunks: {missing_chunks}")
-            results[file_hash]=False
-        else:
-            print("  ✓ All chunks present")
-            results[file_hash]= True
+        if not os.path.exists(chunk_path):
+            missing_chunks.append(chunk_hash)
 
-    return results # In results we are making a dictionary whose keys are  hash of file and values are true/false if file has missing chunk its value is false else true
+    # print results
+    if missing_chunks:
+        print(f"✗ Missing chunks: {missing_chunks}")
+        return False
+    else:
+        print("✓ All chunks present.")
+        return True
 
