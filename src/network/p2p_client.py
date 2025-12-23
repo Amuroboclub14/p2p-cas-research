@@ -5,19 +5,22 @@ import sys
 
 
 def receive_messages(sock):
-
     try:
         while True:
             msg = sock.recv(1024).decode()
             if not msg:
                 print("\n[INFO] Server disconnected")
                 break
-            print(f"\n[SERVER]: {msg}")
+
+            print("\n server response")
+            print(msg)
             print("[YOU]: ", end="", flush=True)
+
     except Exception as e:
         print(f"\n[ERROR] Receiving message: {e}")
     finally:
         sock.close()
+
 
 
 def send_messages(sock):
