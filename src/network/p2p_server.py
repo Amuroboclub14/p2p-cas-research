@@ -2,6 +2,8 @@
 import socket
 import threading
 import sys
+import json
+import os
 
 # Global list to keep track of all connected clients
 clients = []
@@ -33,16 +35,61 @@ def handle_client(conn, addr):
             if not msg:
                 print(f"[INFO] Client {addr} disconnected")
                 break
+
             print(f"[CLIENT {addr}]: {msg}")
+
+            # message interpretation 
+            try:
+                data = json.loads(msg)
+            except json.JSONDecodeError:
+                continue  # normal chat message
+
+            if data.get("type") == "LIST_FILES":
+                index_path = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "storage",
+    "hashed_files",
+    "cas_index.json"
+)
+
+
+                if os.path.exists(index_path):
+                    with open(index_path, "r") as f:
+                        index = json.load(f)
+
+                    files = [
+                        {
+                            "name": meta.get("original_name"),
+                            "hash": h,
+                            "size": meta.get("size", 0),
+                        }
+                        for h, meta in index.items()
+                    ]
+                else:
+                    files = []
+
+                response = {
+                    "type": "FILE_LIST",
+                    "files": files,
+                }
+
+                with clients_lock:
+                    for client_conn, _ in clients:
+                        client_conn.send(json.dumps(response).encode())
+            # message interpretation ends
 
     except Exception as e:
         print(f"[ERROR] Client {addr}: {e}")
+
     finally:
         # Remove client from the list
         with clients_lock:
             clients.remove((conn, addr))
         conn.close()
         print(f"[INFO] Client {addr} removed. Active clients: {len(clients)}")
+
 
 
 def accept_clients(srv):
