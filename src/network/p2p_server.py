@@ -22,10 +22,8 @@ def broadcast_message(message, sender_addr):
 
 
 def handle_client(conn, addr):
-    """Handle communication with a single client"""
     print(f"[INFO] Client {addr} connected")
 
-    # Add client to the list
     with clients_lock:
         clients.append((conn, addr))
 
@@ -44,16 +42,16 @@ def handle_client(conn, addr):
             except json.JSONDecodeError:
                 continue  # normal chat message
 
+            # LIST FILES
             if data.get("type") == "LIST_FILES":
                 index_path = os.path.join(
-    os.path.dirname(__file__),
-    "..",
-    "..",
-    "storage",
-    "hashed_files",
-    "cas_index.json"
-)
-
+                    os.path.dirname(__file__),
+                    "..",
+                    "..",
+                    "storage",
+                    "hashed_files",
+                    "cas_index.json"
+                )
 
                 if os.path.exists(index_path):
                     with open(index_path, "r") as f:
@@ -75,18 +73,34 @@ def handle_client(conn, addr):
                     "files": files,
                 }
 
+                # only to requestiong client
+                conn.send(json.dumps(response).encode())
+
+            # listing peers
+            elif data.get("type") == "LIST_PEERS":
                 with clients_lock:
-                    for client_conn, _ in clients:
-                        client_conn.send(json.dumps(response).encode())
+                    peers = [
+                        {"ip": a[0], "port": a[1]}
+                        for _, a in clients
+                    ]
+
+                response = {
+                    "type": "PEER_LIST",
+                    "peers": peers,
+                }
+
+                # only to requestiong client
+                conn.send(json.dumps(response).encode())
+
             # message interpretation ends
 
     except Exception as e:
         print(f"[ERROR] Client {addr}: {e}")
 
     finally:
-        # Remove client from the list
         with clients_lock:
-            clients.remove((conn, addr))
+            if (conn, addr) in clients:
+                clients.remove((conn, addr))
         conn.close()
         print(f"[INFO] Client {addr} removed. Active clients: {len(clients)}")
 
