@@ -1,3 +1,5 @@
+k = 4  #number of data chunks
+m = 2  #number of parity chunks
 import hashlib, os, sys, json, shutil
 from datetime import datetime
 
@@ -47,6 +49,43 @@ def store_file(path, storage_dir, chunk_size=65536):
     """
     # Hash file and get chunk hashes
     h, chunk_hashes, chunks_data = hash_file(path, chunk_size)
+        # erasure coding started
+    k = 4  # number of data chunks
+    m = 2  # number of parity chunks
+
+    # extracting raw chunk bytes
+    data_chunks = [chunk_data for (_, chunk_data) in chunks_data]
+
+    # Ensure at least k data chunks by padding (for small files)
+    while len(data_chunks) < k:
+     data_chunks.append(b"\x00" * len(data_chunks[0]))
+
+
+    # Select k data chunks
+    data_chunks = data_chunks[:k]
+
+    # Generate simple XOR parity chunks
+    parity_chunks = []
+    for _ in range(m):
+        parity = bytearray(len(data_chunks[0]))
+        for chunk in data_chunks:
+            for i in range(len(chunk)):
+                parity[i] ^= chunk[i]
+        parity_chunks.append(bytes(parity))
+
+    # Combine data + parity chunks
+    encoded_chunks = data_chunks + parity_chunks
+
+    # Hash encoded chunks 
+    encoded_chunks_data = []
+    for chunk in encoded_chunks:
+        chash = hashlib.sha256(chunk).hexdigest()
+        encoded_chunks_data.append((chash, chunk))
+
+    # Replace original chunks with encoded chunks
+    chunks_data = encoded_chunks_data
+    chunk_hashes = [h for (h, _) in encoded_chunks_data]
+
     outpath = os.path.join(storage_dir, h)
 
     os.makedirs(storage_dir, exist_ok=True)
@@ -61,32 +100,31 @@ def store_file(path, storage_dir, chunk_size=65536):
     else:
         print(f"\n✓ File already exists in storage: {h}")
 
-    # --- 🧠 Deduplication logic starts here ---
+    #  Deduplication logic  
     skipped_chunks = 0
     new_chunks = 0
 
     for chunk_hash, chunk_data in chunks_data:
         chunk_path = os.path.join(storage_dir, chunk_hash)
 
-        # ✅ If this chunk already exists, skip storing it again
+        #  If this chunk already exists, skip storing it again
         if os.path.exists(chunk_path):
             skipped_chunks += 1
             continue  # don’t rewrite the same chunk
 
-        # ✅ Otherwise, save the chunk
+        #  Otherwise, save the chunk
         with open(chunk_path, "wb") as f:
             f.write(chunk_data)
         new_chunks += 1
 
     print(f"✓ Stored {new_chunks} new chunks, skipped {skipped_chunks} existing chunks")
-    # --- 🧠 Deduplication logic ends here ---
 
     # Gather file stats for metadata
     file_stat = os.stat(path)
     original_name = os.path.basename(path)
     current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
 
-    # --- Update or create metadata entry ---
+    # Update or create metadata entry 
     if h in index:
         names_list = index[h].get("names", [])
         if original_name not in names_list:
@@ -160,42 +198,39 @@ def retrieve_file(
     tmp_path = os.path.join(
         out_dir, f".{os.path.basename(output_path)}.tmp-{os.getpid()}"
     )
-
     try:
         with open(tmp_path, "wb") as out_f:
-            for i, chunk_hash in enumerate(metadata["chunks"]):
-                # chunk files are stored under storage_dir with filename = chunk_hash
+
+            # Read erasure coding parameter
+            k = metadata.get("k", len(metadata["chunks"]))
+
+            available_chunks = []
+
+            # Collect any k available chunks
+            for chunk_hash in metadata["chunks"]:
                 chunk_path = os.path.join(storage_dir, chunk_hash)
 
-                if not os.path.exists(chunk_path):
-                    print(f"✗ Missing chunk {i}: {chunk_hash}")
-                    # cleanup
-                    out_f.close()
-                    try:
-                        os.remove(tmp_path)
-                    except Exception:
-                        pass
-                    return False
+                if os.path.exists(chunk_path):
+                    with open(chunk_path, "rb") as chunk_f:
+                        available_chunks.append(chunk_f.read())
 
-                # stream the chunk file into output (low memory)
-                with open(chunk_path, "rb") as chunk_f:
-                    while True:
-                        data = chunk_f.read(chunk_size)
-                        if not data:
-                            break
-                        out_f.write(data)
+                if len(available_chunks) == k:
+                    break
 
-                print(f"  ✓ Assembled chunk {i+1}/{len(metadata['chunks'])}")
+            if len(available_chunks) < k:
+                print("✗ Not enough chunks available to reconstruct file")
+                return False
 
-            # flush and sync to disk
+            # Reconstruct file (simple)
+            for chunk in available_chunks:
+                out_f.write(chunk)
+
             out_f.flush()
             try:
                 os.fsync(out_f.fileno())
             except OSError:
-                # not fatal on some filesystems
                 pass
-
-        # move tmp to final destination (atomic on same FS)
+# move tmp to final destination (atomic on same FS)
         try:
             shutil.move(tmp_path, output_path)
         except Exception as e:
