@@ -91,6 +91,67 @@ def handle_client(conn, addr):
 
                 # only to requestiong client
                 conn.send(json.dumps(response).encode())
+            # Requesting file
+            elif data.get("type") == "REQUEST_FILE":
+                file_hash = data.get("hash")
+
+                index_path = os.path.join(os.path.dirname(__file__),"..", "..", "storage", "hashed_files", "cas_index.json")
+
+                if not os.path.exists(index_path):
+                    response = {"type": "FILE_END","hash": file_hash,"status": "NOT_FOUND","size": 0}
+                    conn.sendall(json.dumps(response).encode())
+                    break
+        
+
+                with open(index_path, "r") as f:
+                    index = json.load(f)
+
+                if file_hash not in index:
+                    response = {"type": "FILE_END","hash": file_hash,"status": "NOT_FOUND","size": 0}
+                    conn.sendall(json.dumps(response).encode())
+                    break
+
+                metadata = index[file_hash]
+                chunk_hashes = metadata["chunks"]
+                total_size = metadata.get("size", 0)
+
+                storage_dir = os.path.join(
+                os.path.dirname(__file__),"..", "..", "storage", "hashed_files")
+
+                # Send chunks one by one
+                for i, chunk_hash in enumerate(chunk_hashes):
+                    chunk_path = os.path.join(storage_dir, chunk_hash)
+
+                    if not os.path.exists(chunk_path):
+                        response = {"type": "FILE_END","hash": file_hash,"status": "CHUNK_MISSING","size": total_size}
+                        conn.sendall(json.dumps(response).encode())
+                        break
+        
+
+                    #with open(chunk_path, "rb") as cf:
+                     #   chunk_data = cf.read()
+
+                    
+
+                    response = {
+                        "type": "FILE_CHUNK",
+                        "hash": file_hash,
+                        "data": chunk_hash,
+                        "eof": (i == len(chunk_hashes) - 1)
+                    }
+
+                    conn.sendall(json.dumps(response).encode())
+
+                # Send final EOF message
+                response = {
+                    "type": "FILE_END",
+                    "hash": file_hash,
+                    "status": "OK",
+                    "size": total_size
+                }
+
+                conn.sendall(json.dumps(response).encode())
+
 
             elif data.get("type") == "GET_FILE":
                 file_hash = data.get("hash")
