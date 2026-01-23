@@ -42,7 +42,7 @@ def handle_client(conn, addr):
             except json.JSONDecodeError:
                 continue  # normal chat message
 
-            # LIST FILES
+            # list files
             if data.get("type") == "LIST_FILES":
                 index_path = os.path.join(
                     os.path.dirname(__file__),
@@ -92,7 +92,53 @@ def handle_client(conn, addr):
                 # only to requestiong client
                 conn.send(json.dumps(response).encode())
 
-            # message interpretation ends
+            elif data.get("type") == "GET_FILE":
+                file_hash = data.get("hash")
+
+                storage_dir = os.path.join(
+                    os.path.dirname(__file__),
+                    "..", "..", "storage", "hashed_files"
+                )
+                index_path = os.path.join(storage_dir, "cas_index.json")
+
+                if not os.path.exists(index_path):
+                    conn.send(json.dumps({"type": "ERROR"}).encode())
+                    continue
+
+                with open(index_path, "r") as f:
+                    index = json.load(f)
+
+                if file_hash not in index:
+                    conn.send(json.dumps({"type": "ERROR"}).encode())
+                    continue
+
+                meta = index[file_hash]
+
+                # send metadata
+                conn.send(json.dumps({
+                    "type": "FILE_START",
+                    "name": meta.get("original_name", "received_file"),
+                    "size": meta.get("size", 0)
+                }).encode())
+
+                print(f"[INFO] Sending {meta.get('original_name')} to {addr}")
+
+                # send file data
+                for chunk_hash in meta["chunks"]:
+                    chunk_path = os.path.join(storage_dir, chunk_hash)
+                    if not os.path.exists(chunk_path):
+                        continue
+
+                    with open(chunk_path, "rb") as cf:
+                        while True:
+                            data_bytes = cf.read(4096)
+                            if not data_bytes:
+                                break
+                            conn.sendall(data_bytes)
+
+                conn.send(json.dumps({"type": "FILE_END"}).encode())
+
+
 
     except Exception as e:
         print(f"[ERROR] Client {addr}: {e}")

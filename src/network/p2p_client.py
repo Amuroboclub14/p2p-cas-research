@@ -1,25 +1,75 @@
 #!/usr/bin/env python3
+import json
 import socket
 import threading
 import sys
 
 
 def receive_messages(sock):
+    receiving_file = False
+    file = None
+
     try:
         while True:
-            msg = sock.recv(1024).decode()
-            if not msg:
+            data = sock.recv(4096)
+            if not data:
                 print("\n[INFO] Server disconnected")
                 break
 
-            print("\n server response")
-            print(msg)
-            print("[YOU]: ", end="", flush=True)
+            # try decoding as text
+            msg = None
+            if not receiving_file:
+                try:
+                    msg = data.decode()
+                except UnicodeDecodeError:
+                    pass
+
+
+            #parsing JSON (metadata)
+            meta = None
+            if msg:
+                try:
+                    meta = json.loads(msg)
+                except json.JSONDecodeError:
+                    meta = None
+
+            # file start
+            if meta and meta.get("type") == "FILE_START":
+                filename = meta.get("name", "received_file")
+                size = meta.get("size", 0)
+
+                print(f"\n[INFO] Receiving file: {filename} ({size} bytes)")
+                file = open(filename, "wb")
+                receiving_file = True
+                continue
+
+            # file end
+            if meta and meta.get("type") == "FILE_END":
+                if file:
+                    file.close()
+                file = None
+                receiving_file = False
+                print("[INFO] File transfer completed\n")
+                continue
+
+            # file data
+            if receiving_file:
+                file.write(data)
+                continue
+
+            # normal message
+            elif msg:
+                print("\n[SERVER]:", msg)
+                print("[YOU]: ", end="", flush=True)
 
     except Exception as e:
         print(f"\n[ERROR] Receiving message: {e}")
     finally:
+        if file:
+            file.close()
         sock.close()
+
+
 
 
 
