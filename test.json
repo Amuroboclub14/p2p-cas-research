@@ -1,0 +1,8 @@
+{
+  "type": "REQUEST_FILE",
+  "file_name": "abc.txt"
+},
+{
+    "status": 200,
+    "data": [],
+}
