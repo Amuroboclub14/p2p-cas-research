@@ -6,68 +6,56 @@ import sys
 
 
 def receive_messages(sock):
-    receiving_file = False
     file = None
 
     try:
         while True:
-            data = sock.recv(4096)
-            if not data:
-                print("\n[INFO] Server disconnected")
-                break
+            # 1️read metadata line
+            meta_raw = b""
+            while not meta_raw.endswith(b"\n"):
+                chunk = sock.recv(1)
+                if not chunk:
+                    print("\n[INFO] Server disconnected")
+                    return
+                meta_raw += chunk
 
-            # try decoding as text
-            msg = None
-            if not receiving_file:
-                try:
-                    msg = data.decode()
-                except UnicodeDecodeError:
-                    pass
-
-
-            #parsing JSON (metadata)
-            meta = None
-            if msg:
-                try:
-                    meta = json.loads(msg)
-                except json.JSONDecodeError:
-                    meta = None
+            meta = json.loads(meta_raw.decode().strip())
 
             # file start
-            if meta and meta.get("type") == "FILE_START":
+            if meta.get("type") == "FILE_START":
                 filename = meta.get("name", "received_file")
-                size = meta.get("size", 0)
+                remaining = meta.get("size", 0)
 
-                print(f"\n[INFO] Receiving file: {filename} ({size} bytes)")
+                print(f"[INFO] Receiving file: {filename} ({remaining} bytes)")
                 file = open(filename, "wb")
-                receiving_file = True
-                continue
 
-            # file end
-            if meta and meta.get("type") == "FILE_END":
-                if file:
-                    file.close()
+                # exact file bytes
+                while remaining > 0:
+                    data = sock.recv(min(4096, remaining))
+                    if not data:
+                        raise Exception("Connection lost during file transfer")
+                    file.write(data)
+                    remaining -= len(data)
+
+                file.close()
                 file = None
-                receiving_file = False
                 print("[INFO] File transfer completed\n")
-                continue
-
-            # file data
-            if receiving_file:
-                file.write(data)
-                continue
+                print("[YOU]:", end = "", flush=True)
+            
 
             # normal message
-            elif msg:
-                print("\n[SERVER]:", msg)
-                print("[YOU]: ", end="", flush=True)
+            else:
+                print("\n[SERVER]:", meta)
+                print("[YOU]:",end = "", flush=True)
 
     except Exception as e:
-        print(f"\n[ERROR] Receiving message: {e}")
+        print(f"[ERROR] {e}")
     finally:
         if file:
             file.close()
         sock.close()
+
+
 
 
 
@@ -82,7 +70,7 @@ def send_messages(sock):
                 print("[INFO] Closing connection...")
                 sock.close()
                 sys.exit(0)
-            sock.send(msg.encode())
+            sock.send((msg + "\n").encode())
     except Exception as e:
         print(f"\n[ERROR] Sending message: {e}")
         sock.close()
@@ -126,3 +114,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+

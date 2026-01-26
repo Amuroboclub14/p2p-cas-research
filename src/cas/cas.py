@@ -1,5 +1,5 @@
 k = 4  #number of data chunks
-m = 2  #number of parity chunks
+m = 1  #number of parity chunks
 import hashlib, os, sys, json, shutil
 from datetime import datetime
 
@@ -43,28 +43,25 @@ def load_index(storage_dir):
 
 
 def store_file(path, storage_dir, chunk_size=65536):
-    """
-    Store file in CAS and maintain metadata in cas_index.json
-    Includes deduplication to avoid storing duplicate chunks.
-    """
-    # Hash file and get chunk hashes
     h, chunk_hashes, chunks_data = hash_file(path, chunk_size)
-        # erasure coding started
-    k = 4  # number of data chunks
-    m = 2  # number of parity chunks
 
-    # extracting raw chunk bytes
+    os.makedirs(storage_dir, exist_ok=True)
+
+    k = 4
+    m = 1
+
+    # counters FIRST
+    new_chunks = 0
+    skipped_chunks = 0
+
+    # extract raw chunks
     data_chunks = [chunk_data for (_, chunk_data) in chunks_data]
-
-    # Ensure at least k data chunks by padding (for small files)
-    while len(data_chunks) < k:
-     data_chunks.append(b"\x00" * len(data_chunks[0]))
+    
+    
 
 
-    # Select k data chunks
-    data_chunks = data_chunks[:k]
 
-    # Generate simple XOR parity chunks
+    # XOR parity
     parity_chunks = []
     for _ in range(m):
         parity = bytearray(len(data_chunks[0]))
@@ -73,95 +70,60 @@ def store_file(path, storage_dir, chunk_size=65536):
                 parity[i] ^= chunk[i]
         parity_chunks.append(bytes(parity))
 
-    # Combine data + parity chunks
-    encoded_chunks = data_chunks + parity_chunks
+    # saving data chunks
+    data_chunk_hashes = []
+    for chunk in data_chunks:
+        ch = hashlib.sha256(chunk).hexdigest()
+        data_chunk_hashes.append(ch)
 
-    # Hash encoded chunks 
-    encoded_chunks_data = []
-    for chunk in encoded_chunks:
-        chash = hashlib.sha256(chunk).hexdigest()
-        encoded_chunks_data.append((chash, chunk))
-
-    # Replace original chunks with encoded chunks
-    chunks_data = encoded_chunks_data
-    chunk_hashes = [h for (h, _) in encoded_chunks_data]
-
-    outpath = os.path.join(storage_dir, h)
-
-    os.makedirs(storage_dir, exist_ok=True)
-
-    # Load existing metadata index
-    index = load_index(storage_dir)
-
-    # Check if file already exists
-    file_already_exists = os.path.exists(outpath)
-    if not file_already_exists:
-        print(f"\n✓ Storing new file: {h}")
-    else:
-        print(f"\n✓ File already exists in storage: {h}")
-
-    #  Deduplication logic  
-    skipped_chunks = 0
-    new_chunks = 0
-
-    for chunk_hash, chunk_data in chunks_data:
-        chunk_path = os.path.join(storage_dir, chunk_hash)
-
-        #  If this chunk already exists, skip storing it again
-        if os.path.exists(chunk_path):
+        chunk_path = os.path.join(storage_dir, ch)
+        if not os.path.exists(chunk_path):
+            with open(chunk_path, "wb") as f:
+                f.write(chunk)
+            new_chunks += 1
+        else:
             skipped_chunks += 1
-            continue  # don’t rewrite the same chunk
 
-        #  Otherwise, save the chunk
-        with open(chunk_path, "wb") as f:
-            f.write(chunk_data)
-        new_chunks += 1
+    # saving parity chunks
+    parity_chunk_hashes = []
+    for chunk in parity_chunks:
+        ch = hashlib.sha256(chunk).hexdigest()
+        parity_chunk_hashes.append(ch)
+
+        chunk_path = os.path.join(storage_dir, ch)
+        if not os.path.exists(chunk_path):
+            with open(chunk_path, "wb") as f:
+                f.write(chunk)
+            new_chunks += 1
+        else:
+            skipped_chunks += 1
 
     print(f"✓ Stored {new_chunks} new chunks, skipped {skipped_chunks} existing chunks")
 
-    # Gather file stats for metadata
+    # metadata
+    index = load_index(storage_dir)
+
     file_stat = os.stat(path)
-    original_name = os.path.basename(path)
     current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
 
-    # Update or create metadata entry 
-    if h in index:
-        names_list = index[h].get("names", [])
-        if original_name not in names_list:
-            names_list.append(original_name)
+    index[h] = {
+        "hash": h,
+        "original_name": os.path.basename(path),
+        "size": file_stat.st_size,
+        "k": k,
+        "m": m,
+        "data_chunks": data_chunk_hashes,
+        "parity_chunks": parity_chunk_hashes,
+        "chunk_size": chunk_size,
+        "stored_at": current_time,
+        "last_accessed": current_time,
+    }
 
-        index[h].update(
-            {
-                "names": names_list,
-                "chunks": chunk_hashes,
-                "chunk_count": len(chunk_hashes),
-                "chunk_size": chunk_size,
-                "last_accessed": current_time,
-            }
-        )
-        if "stored_at" not in index[h]:
-            index[h]["stored_at"] = current_time
-        print(f"✓ Updated metadata for existing file")
-
-    else:
-        index[h] = {
-            "hash": h,
-            "original_name": original_name,
-            "names": [original_name],
-            "size": file_stat.st_size,
-            "chunks": chunk_hashes,
-            "chunk_count": len(chunk_hashes),
-            "chunk_size": chunk_size,
-            "stored_at": current_time,
-            "last_accessed": current_time,
-        }
-        print(f"✓ Created new metadata entry")
-
-    # Save updated metadata
     save_index(storage_dir, index)
-    print(f"✓ Metadata saved to: {os.path.join(storage_dir, 'cas_index.json')}")
+    print(f"✓ Metadata saved to {storage_dir}/cas_index.json")
 
     return h
+
 
 
 def retrieve_file(
@@ -172,7 +134,6 @@ def retrieve_file(
     chunk_size: int = 65536,
 ) -> bool:
 
-    # load index from storage_dir
     index = load_index(storage_dir)
 
     if file_hash not in index:
@@ -183,110 +144,72 @@ def retrieve_file(
     print(f"Retrieving file: {metadata.get('original_name', '<unknown>')}")
     print(f"  Hash: {file_hash}")
     print(f"  Size: {metadata.get('size', '<unknown>')} bytes")
-    print(f"  Chunks: {metadata.get('chunk_count', len(metadata.get('chunks', [])))}")
 
-    # Ensure target dir exists
     out_dir = os.path.dirname(os.path.abspath(output_path)) or "."
     os.makedirs(out_dir, exist_ok=True)
 
-    # Overwrite safety
     if os.path.exists(output_path) and not overwrite:
-        print(f"✗ Output file already exists: {output_path} (use --force to overwrite)")
+        print(f"✗ Output file already exists: {output_path}")
         return False
 
-    # Create temp file in same dir for atomic replace
     tmp_path = os.path.join(
         out_dir, f".{os.path.basename(output_path)}.tmp-{os.getpid()}"
     )
+
     try:
         with open(tmp_path, "wb") as out_f:
 
-            # Read erasure coding parameter
-            k = metadata.get("k", len(metadata["chunks"]))
+            data_chunks = metadata["data_chunks"]
+            parity_chunks = metadata["parity_chunks"]
+            chunks = []
+            missing_index = None
+            for i, ch in enumerate(data_chunks):
+                path = os.path.join(storage_dir, ch)
+                if os.path.exists(path):
+                    with open(path, "rb") as f:
+                        chunks.append(f.read())
+                else:
+                    missing_index = i
+                    chunks.append(None)
+                     
+                    if missing_index is not None:
+                        for chunk in chunks:
+                            out_f.write(chunk)
 
-            available_chunks = []
-
-            # Collect any k available chunks
-            for chunk_hash in metadata["chunks"]:
-                chunk_path = os.path.join(storage_dir, chunk_hash)
-
-                if os.path.exists(chunk_path):
-                    with open(chunk_path, "rb") as chunk_f:
-                        available_chunks.append(chunk_f.read())
-
-                if len(available_chunks) == k:
-                    break
-
-            if len(available_chunks) < k:
-                print("✗ Not enough chunks available to reconstruct file")
+            else:
+             if not parity_chunks:
+                print("✗ No parity chunks available for reconstruction.")
                 return False
-
-            # Reconstruct file (simple)
-            for chunk in available_chunks:
-                out_f.write(chunk)
-
-            out_f.flush()
-            try:
-                os.fsync(out_f.fileno())
-            except OSError:
-                pass
-# move tmp to final destination (atomic on same FS)
-        try:
-            shutil.move(tmp_path, output_path)
-        except Exception as e:
-            print(f"✗ Failed to move temp file into place: {e}")
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-            return False
-
-    except IOError as e:
-        print(f"✗ I/O error while writing output: {e}")
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
-        return False
+            parity_path = os.path.join(storage_dir, parity_chunks[0])
+            if not os.path.exists(parity_path):
+                print("✗ Parity chunk missing, cannot reconstruct the file.")
+                return False
+            with open(parity_path, "rb") as pf:
+                recovered = bytearray(pf.read())
+                for chunk in chunks:
+                    if chunk is not None:
+                        for i in range(len(chunk)):
+                            recovered[i] ^= chunk[i]
+                            for chunk in chunks:
+                                out_f.write(chunk)
+                                os.replace(tmp_path, output_path)
     except Exception as e:
-        print(f"✗ Unexpected error during retrieval: {e}")
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
-        return False
-
-    # verify integrity using your hash_file (which returns (hash, chunk_hashes, chunks_data))
-    print("Verifying file integrity...")
-    try:
-        reconstructed_hash = hash_file(output_path, chunk_size)[0]
-    except Exception as e:
-        print(f"✗ Error hashing reconstructed file: {e}")
-        try:
-            os.remove(output_path)
-        except Exception:
-            pass
-        return False
-
+     print(f"✗ Error during reconstruction: {e}")
+     if os.path.exists(tmp_path):
+         os.remove(tmp_path)
+         return False
+     
+     print("Verifying file integrity... ")
+     reconstructed_hash = hash_file(output_path, chunk_size)[0]
     if reconstructed_hash == file_hash:
-        print("✓ File integrity verified!")
-        # update last_accessed in index and save
-        index[file_hash]["last_accessed"] = datetime.now().strftime(
-            "%Y-%m-%dT%H:%M:%S.%f"
-        )[:-3]
-        save_index(storage_dir, index)
-        return True
+            print("✓ File integrity verified!")
+            return True
     else:
-        print("✗ File integrity check failed!")
-        print(f"  Expected: {file_hash}")
-        print(f"  Got:      {reconstructed_hash}")
-        try:
+            print("✗ File integrity check failed!")
             os.remove(output_path)
-        except Exception:
-            pass
-        return False
+            return False
+            
+
 def list_files(storage_dir="storage/hashed_files"):
     """
     List all files stored in CAS using cas_index.json
@@ -303,7 +226,7 @@ def list_files(storage_dir="storage/hashed_files"):
     for file_hash, metadata in index.items():
         name = metadata.get("original_name", "<unknown>")
         size = metadata.get("size", 0)
-        chunk_count = metadata.get("chunk_count", len(metadata.get("chunks", [])))
+        chunk_count = metadata["k"] + metadata["m"]
         stored_at = metadata.get("stored_at", "<unknown>")
         last_accessed = metadata.get("last_accessed", "<unknown>")
 
@@ -333,7 +256,7 @@ def verify_integrity(storage_dir, file_hash):
         return None
 
     metadata = index[file_hash]
-    chunk_hashes = metadata["chunks"]
+    chunk_hashes = metadata["data_chunks"] + metadata["parity_chunks"]
 
     print(f"File: {metadata['original_name']}")
     missing_chunks = []
