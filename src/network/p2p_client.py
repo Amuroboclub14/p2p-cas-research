@@ -1,25 +1,63 @@
 #!/usr/bin/env python3
+import json
 import socket
 import threading
 import sys
 
 
 def receive_messages(sock):
+    file = None
+
     try:
         while True:
-            msg = sock.recv(1024).decode()
-            if not msg:
-                print("\n[INFO] Server disconnected")
-                break
+            # 1️read metadata line
+            meta_raw = b""
+            while not meta_raw.endswith(b"\n"):
+                chunk = sock.recv(1)
+                if not chunk:
+                    print("\n[INFO] Server disconnected")
+                    return
+                meta_raw += chunk
 
-            print("\n server response")
-            print(msg)
-            print("[YOU]: ", end="", flush=True)
+            meta = json.loads(meta_raw.decode().strip())
+
+            # file start
+            if meta.get("type") == "FILE_START":
+                filename = meta.get("name", "received_file")
+                remaining = meta.get("size", 0)
+
+                print(f"[INFO] Receiving file: {filename} ({remaining} bytes)")
+                file = open(filename, "wb")
+
+                # exact file bytes
+                while remaining > 0:
+                    data = sock.recv(min(4096, remaining))
+                    if not data:
+                        raise Exception("Connection lost during file transfer")
+                    file.write(data)
+                    remaining -= len(data)
+
+                file.close()
+                file = None
+                print("[INFO] File transfer completed\n")
+                print("[YOU]:", end = "", flush=True)
+            
+
+            # normal message
+            else:
+                print("\n[SERVER]:", meta)
+                print("[YOU]:",end = "", flush=True)
 
     except Exception as e:
-        print(f"\n[ERROR] Receiving message: {e}")
+        print(f"[ERROR] {e}")
     finally:
+        if file:
+            file.close()
         sock.close()
+
+
+
+
 
 
 
@@ -32,7 +70,7 @@ def send_messages(sock):
                 print("[INFO] Closing connection...")
                 sock.close()
                 sys.exit(0)
-            sock.send(msg.encode())
+            sock.send((msg + "\n").encode())
     except Exception as e:
         print(f"\n[ERROR] Sending message: {e}")
         sock.close()
@@ -76,3 +114,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+

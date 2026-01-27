@@ -29,70 +29,95 @@ def handle_client(conn, addr):
 
     try:
         while True:
-            msg = conn.recv(1024).decode()
+            msg = conn.recv(1024)
             if not msg:
                 print(f"[INFO] Client {addr} disconnected")
                 break
 
-            print(f"[CLIENT {addr}]: {msg}")
-
-            # message interpretation 
             try:
-                data = json.loads(msg)
+                data = json.loads(msg.decode())
             except json.JSONDecodeError:
-                continue  # normal chat message
+                continue
 
-            # LIST FILES
+            # ============ LIST FILES ============
             if data.get("type") == "LIST_FILES":
                 index_path = os.path.join(
                     os.path.dirname(__file__),
-                    "..",
-                    "..",
-                    "storage",
-                    "hashed_files",
+                    "..", "..", "storage", "hashed_files",
                     "cas_index.json"
                 )
 
+                files = []
                 if os.path.exists(index_path):
                     with open(index_path, "r") as f:
                         index = json.load(f)
 
-                    files = [
-                        {
-                            "name": meta.get("original_name"),
+                    for h, meta in index.items():
+                        files.append({
+                            "name": meta["original_name"],
                             "hash": h,
-                            "size": meta.get("size", 0),
-                        }
-                        for h, meta in index.items()
-                    ]
-                else:
-                    files = []
+                            "size": meta["size"]
+                        })
 
-                response = {
+                conn.sendall((json.dumps({
                     "type": "FILE_LIST",
-                    "files": files,
-                }
+                    "files": files
+                }) + "\n").encode())
 
-                # only to requestiong client
-                conn.send(json.dumps(response).encode())
+            # ============ GET FILE ============
+            elif data.get("type") == "GET_FILE":
+                file_hash = data.get("hash")
 
-            # listing peers
-            elif data.get("type") == "LIST_PEERS":
-                with clients_lock:
-                    peers = [
-                        {"ip": a[0], "port": a[1]}
-                        for _, a in clients
-                    ]
+                storage_dir = os.path.join(
+                    os.path.dirname(__file__),
+                    "..", "..", "storage", "hashed_files"
+                )
+                index_path = os.path.join(storage_dir, "cas_index.json")
 
-                response = {
-                    "type": "PEER_LIST",
-                    "peers": peers,
-                }
+                if not os.path.exists(index_path):
+                    conn.sendall(json.dumps({"type": "ERROR"}).encode())
+                    continue
 
-                # only to requestiong client
-                conn.send(json.dumps(response).encode())
+                with open(index_path, "r") as f:
+                    index = json.load(f)
 
-            # message interpretation ends
+                if file_hash not in index:
+                    conn.sendall(json.dumps({"type": "ERROR"}).encode())
+                    continue
+
+                meta = index[file_hash]
+
+                # ---- FILE START ----
+                conn.sendall(
+                    (json.dumps({
+                        "type": "FILE_START",
+                        "name": meta["original_name"],
+                        "size": meta["size"]
+                    }) + "\n").encode()
+                )
+
+                print(f"[INFO] Sending {meta['original_name']} to {addr}")
+
+                # ---- SEND FILE DATA (DATA CHUNKS ONLY) ----
+                for chunk_hash in meta["data_chunks"]:
+                    chunk_path = os.path.join(storage_dir, chunk_hash)
+
+                    if not os.path.exists(chunk_path):
+                        continue
+
+                    with open(chunk_path, "rb") as cf:
+                        while True:
+                            data_bytes = cf.read(4096)
+                            if not data_bytes:
+                                break
+                            conn.sendall(data_bytes)
+
+                # ---- FILE END (🔥 THIS WAS MISSING 🔥) ----
+                conn.sendall((json.dumps({
+                    "type": "FILE_END"
+                }) + "\n").encode())
+
+                print(f"[INFO] File sent successfully to {addr}")
 
     except Exception as e:
         print(f"[ERROR] Client {addr}: {e}")
