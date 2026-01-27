@@ -114,7 +114,8 @@ class DHTEnabledNode:
         # Load index to get chunk info
         index = cas.load_index(self.storage_dir)
         file_meta = index.get(file_hash, {})
-        chunks = file_meta.get('chunks', [])
+        # CAS stores chunks under 'data_chunks' and 'parity_chunks' keys
+        chunks = file_meta.get('data_chunks', []) + file_meta.get('parity_chunks', [])
         
         # Register each chunk in DHT
         print(f"   Registering {len(chunks)} chunks in DHT...")

@@ -61,13 +61,16 @@ def store_file(path, storage_dir, chunk_size=65536):
 
 
 
-    # XOR parity
+    # XOR parity - pad chunks to consistent size for correct XOR
     parity_chunks = []
+    max_chunk_size = len(data_chunks[0]) if data_chunks else 0
     for _ in range(m):
-        parity = bytearray(len(data_chunks[0]))
+        parity = bytearray(max_chunk_size)
         for chunk in data_chunks:
-            for i in range(len(chunk)):
-                parity[i] ^= chunk[i]
+            # Pad chunk if smaller than max (last chunk may be smaller)
+            padded_chunk = chunk + b'\x00' * (max_chunk_size - len(chunk))
+            for i in range(max_chunk_size):
+                parity[i] ^= padded_chunk[i]
         parity_chunks.append(bytes(parity))
 
     # saving data chunks
@@ -133,7 +136,10 @@ def retrieve_file(
     overwrite: bool = False,
     chunk_size: int = 65536,
 ) -> bool:
-
+    """
+    Retrieve a file from CAS storage by its hash.
+    Supports reconstruction of one missing data chunk using XOR parity.
+    """
     index = load_index(storage_dir)
 
     if file_hash not in index:
@@ -141,9 +147,10 @@ def retrieve_file(
         return False
 
     metadata = index[file_hash]
+    original_size = metadata.get("size", 0)
     print(f"Retrieving file: {metadata.get('original_name', '<unknown>')}")
     print(f"  Hash: {file_hash}")
-    print(f"  Size: {metadata.get('size', '<unknown>')} bytes")
+    print(f"  Size: {original_size} bytes")
 
     out_dir = os.path.dirname(os.path.abspath(output_path)) or "."
     os.makedirs(out_dir, exist_ok=True)
@@ -157,57 +164,93 @@ def retrieve_file(
     )
 
     try:
-        with open(tmp_path, "wb") as out_f:
+        data_chunk_hashes = metadata["data_chunks"]
+        parity_chunk_hashes = metadata["parity_chunks"]
+        stored_chunk_size = metadata.get("chunk_size", chunk_size)
 
-            data_chunks = metadata["data_chunks"]
-            parity_chunks = metadata["parity_chunks"]
-            chunks = []
-            missing_index = None
-            for i, ch in enumerate(data_chunks):
-                path = os.path.join(storage_dir, ch)
-                if os.path.exists(path):
-                    with open(path, "rb") as f:
-                        chunks.append(f.read())
-                else:
-                    missing_index = i
-                    chunks.append(None)
-                     
-                    if missing_index is not None:
-                        for chunk in chunks:
-                            out_f.write(chunk)
+        # Load all data chunks, tracking missing ones
+        chunks = []
+        missing_indices = []
 
+        for i, ch in enumerate(data_chunk_hashes):
+            chunk_path = os.path.join(storage_dir, ch)
+            if os.path.exists(chunk_path):
+                with open(chunk_path, "rb") as f:
+                    chunks.append(f.read())
             else:
-             if not parity_chunks:
+                print(f"  ⚠ Missing data chunk {i}: {ch[:16]}...")
+                missing_indices.append(i)
+                chunks.append(None)
+
+        # Check how many chunks are missing
+        if len(missing_indices) > 1:
+            print(f"✗ Too many missing chunks ({len(missing_indices)}). XOR parity can only recover 1.")
+            return False
+
+        # Reconstruct missing chunk if exactly one is missing
+        if len(missing_indices) == 1:
+            missing_idx = missing_indices[0]
+            print(f"  → Attempting to reconstruct chunk {missing_idx} using parity...")
+
+            if not parity_chunk_hashes:
                 print("✗ No parity chunks available for reconstruction.")
                 return False
-            parity_path = os.path.join(storage_dir, parity_chunks[0])
+
+            parity_path = os.path.join(storage_dir, parity_chunk_hashes[0])
             if not os.path.exists(parity_path):
                 print("✗ Parity chunk missing, cannot reconstruct the file.")
                 return False
+
+            # Load parity chunk
             with open(parity_path, "rb") as pf:
-                recovered = bytearray(pf.read())
-                for chunk in chunks:
-                    if chunk is not None:
-                        for i in range(len(chunk)):
-                            recovered[i] ^= chunk[i]
-                            for chunk in chunks:
-                                out_f.write(chunk)
-                                os.replace(tmp_path, output_path)
+                parity_data = bytearray(pf.read())
+
+            # XOR all available chunks with parity to recover missing chunk
+            recovered = parity_data  # Start with parity
+            for i, chunk in enumerate(chunks):
+                if chunk is not None:
+                    # Pad chunk to match parity size if needed (last chunk may be smaller)
+                    padded_chunk = chunk + b'\x00' * (len(recovered) - len(chunk))
+                    for j in range(len(recovered)):
+                        recovered[j] ^= padded_chunk[j]
+
+            # Insert recovered chunk (may need to trim if it was the last chunk)
+            chunks[missing_idx] = bytes(recovered)
+            print(f"  ✓ Chunk {missing_idx} reconstructed successfully.")
+
+        # Write all chunks to output file
+        with open(tmp_path, "wb") as out_f:
+            for chunk in chunks:
+                if chunk is not None:
+                    out_f.write(chunk)
+
+        # Truncate to original file size (removes padding from last chunk)
+        if original_size > 0:
+            with open(tmp_path, "r+b") as f:
+                f.truncate(original_size)
+
+        # Atomically move temp file to final location
+        os.replace(tmp_path, output_path)
+
     except Exception as e:
-     print(f"✗ Error during reconstruction: {e}")
-     if os.path.exists(tmp_path):
-         os.remove(tmp_path)
-         return False
-     
-     print("Verifying file integrity... ")
-     reconstructed_hash = hash_file(output_path, chunk_size)[0]
+        print(f"✗ Error during retrieval: {e}")
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        return False
+
+    # Verify file integrity
+    print("Verifying file integrity...")
+    reconstructed_hash = hash_file(output_path, chunk_size)[0]
+
     if reconstructed_hash == file_hash:
-            print("✓ File integrity verified!")
-            return True
+        print("✓ File integrity verified!")
+        return True
     else:
-            print("✗ File integrity check failed!")
-            os.remove(output_path)
-            return False
+        print("✗ File integrity check failed!")
+        print(f"  Expected: {file_hash}")
+        print(f"  Got:      {reconstructed_hash}")
+        os.remove(output_path)
+        return False
             
 
 def list_files(storage_dir="storage/hashed_files"):

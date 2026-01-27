@@ -13,7 +13,6 @@ from .node import Node, generate_node_id, xor_distance
 from .routing_table import RoutingTable, K
 from .network import create_protocol, KademliaProtocol
 from .rpc import RPCHandler, RPCType, create_rpc_request
-from src.content_hash_storage import ContentHashStorage
 
 
 logger = logging.getLogger(__name__)
