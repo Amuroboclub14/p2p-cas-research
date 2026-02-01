@@ -4,6 +4,9 @@ import threading
 import sys
 import json
 import os
+from src.network.dh_utils import (
+    generate_dh_parameters, generate_private_key, generate_shared_key )
+DH_PARAMS = generate_dh_parameters()
 
 # Global list to keep track of all connected clients
 clients = []
@@ -24,6 +27,27 @@ def broadcast_message(message, sender_addr):
 def handle_client(conn, addr):
     print(f"[INFO] Client {addr} connected")
 
+# Diffie hellman handshake (server side)
+    from cryptography.hazmat.primitives import serialization
+    # send parameters to client
+    params_bytes = DH_PARAMS.parameter_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.ParameterFormat.PKCS3
+    )
+    conn.sendall(params_bytes)
+    server_private_key = generate_private_key(DH_PARAMS)
+    server_public_key = server_private_key.public_key()
+    # receive client's public key
+    client_pub_bytes = conn.recv(2048)
+    client_public_key = serialization.load_pem_public_key(client_pub_bytes)
+    # send server's public key
+    server_pub_bytes = server_public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    conn.sendall(server_pub_bytes)
+    shared_key = generate_shared_key(server_private_key, client_public_key)
+    print(f"[SECURITY] Diffie Hellman handshake completed on SERVER")
     with clients_lock:
         clients.append((conn, addr))
 
