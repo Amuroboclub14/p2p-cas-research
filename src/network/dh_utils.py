@@ -4,7 +4,7 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 def generate_dh_parameters():
-    return dh.generate_parameters(generator=2, key_size=2048)
+    return dh.generate_parameters(generator=2, key_size=1024)
 def generate_private_key(parameters):
     return parameters.generate_private_key()
 def generate_shared_key(private_key, peer_public_key):
