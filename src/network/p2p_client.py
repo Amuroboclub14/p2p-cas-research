@@ -3,7 +3,9 @@ import json
 import socket
 import threading
 import sys
-
+from src.network.dh_utils import (
+     generate_private_key, generate_shared_key )
+from cryptography.hazmat.primitives import serialization
 
 def receive_messages(sock):
     file = None
@@ -89,6 +91,24 @@ def main():
         print("[INFO] Connected to server!")
         print("[INFO] Type 'quit' to exit\n")
 
+        # diffie hellman handshake
+        # receive parameters from server
+        params_bytes = sock.recv(2048)
+        dh_params = serialization.load_pem_parameters(params_bytes)
+        client_private_key = generate_private_key(dh_params)
+        client_public_key = client_private_key.public_key()
+        print("[SECURITY] Diffie Hellman handshake initiated on Client")
+        client_pub_bytes = client_public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        sock.sendall(client_pub_bytes)
+        # receive server's public key
+        server_pub_bytes = sock.recv(2048)
+        server_public_key = serialization.load_pem_public_key(server_pub_bytes)
+        #derive shared key
+        shared_key = generate_shared_key(client_private_key, server_public_key)
+        print("[SECURITY] Diffie Hellman handshake completed on CLIENT")
         # Start threads for sending and receiving
         recv_thread = threading.Thread(
             target=receive_messages, args=(sock,), daemon=True
