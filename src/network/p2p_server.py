@@ -6,11 +6,13 @@ import json
 import os
 from src.network.dh_utils import (
     generate_dh_parameters, generate_private_key, generate_shared_key )
+import asyncio
+from src.dht.kademlia import KademliaNode
 
 # Global list to keep track of all connected clients
 clients = []
 clients_lock = threading.Lock()
-
+DHT_NODE=None
 
 def broadcast_message(message, sender_addr):
     """Send message to all connected clients except the sender"""
@@ -174,8 +176,148 @@ def server_input():
     """Handle server-side input to broadcast messages"""
     while True:
         try:
-            msg = input()
-            if msg.lower() == "quit":
+            msg = input().strip()
+            parts = msg.split(maxsplit=1)
+            cmd = parts[0]
+            arg = parts[1] if len(parts) > 1 else None
+            # ---- COMMAND ROUTER ----
+            if cmd == "dht":
+                if DHT_NODE is None:
+                    print("[DHT] Not initialized")
+                else:
+                    print(DHT_NODE.debug_status())
+                continue
+
+            if cmd == "files":
+                index_path = os.path.join(
+                    os.path.dirname(__file__),
+                    "..", "..", "storage", "hashed_files",
+                    "cas_index.json"
+                )
+
+                if not os.path.exists(index_path):
+                    print("[FILES] No files stored")
+                    continue
+
+                with open(index_path, "r") as f:
+                    index = json.load(f)
+
+                if not index:
+                    print("[FILES] No files stored")
+                    continue
+
+                print("[FILES] Stored files:")
+                for file_hash, meta in index.items():
+                    name = meta.get("original_name", "unknown")
+                    size = meta.get("size", "N/A")
+                    print(f"- {name} | hash={file_hash[:8]}... | size={size}")
+
+                continue
+
+
+            if cmd == "peers":
+                if DHT_NODE is None:
+                    print("[PEERS] DHT not initialized")
+                    continue
+
+                nodes = DHT_NODE.routing_table.get_all_nodes()
+
+                if not nodes:
+                    print("[PEERS] No peers known")
+                else:
+                    print("[PEERS] Known DHT peers:")
+                    for n in nodes:
+                        print(f"- {n.node_id.hex()} @ {n.ip}:{n.port}")
+
+                continue
+
+
+            if cmd == "store":
+                if not arg:
+                    print("[STORE] Usage: store <file_path>")
+                    continue
+
+                if not os.path.exists(arg):
+                    print(f"[STORE] File not found: {arg}")
+                    continue
+
+                print(f"[STORE] Storing file: {arg}")
+
+                # 1️⃣ Store file using CAS
+                from src.cas.cas import store_file
+
+                try:
+                    file_hash = store_file(
+                        arg,
+                        os.path.join(
+                            os.path.dirname(__file__),
+                            "..", "..", "storage", "hashed_files"
+                        )
+                    )
+                except Exception as e:
+                    print(f"[STORE] Failed to store file: {e}")
+                    continue
+
+                print(f"[STORE] File stored with hash: {file_hash}")
+
+                # 2️⃣ Load CAS index
+                index_path = os.path.join(
+                    os.path.dirname(__file__),
+                    "..", "..", "storage", "hashed_files",
+                    "cas_index.json"
+                )
+
+                with open(index_path, "r") as f:
+                    index = json.load(f)
+
+                meta = index[file_hash]
+                chunks = meta.get("data_chunks", [])+meta.get("parity_chunks",[])
+
+                print(f"[STORE] Registering {len(chunks)} chunks in DHT")
+
+                # 3️⃣ Register each chunk in DHT
+                peer_info = {
+                    "node_id": DHT_NODE.local_node.node_id.hex(),
+                    "ip": "127.0.0.1",
+                    "port": 9000
+                }
+
+                for chunk_hash in chunks:
+                    asyncio.get_event_loop().run_until_complete(
+                        DHT_NODE.set(chunk_hash, peer_info)
+                    )
+
+                print("[STORE] File registered in DHT")
+                continue
+            if cmd == "lookup":
+                if not arg:
+                    print("[LOOKUP] Usage: lookup <chunk_hash>")
+                    continue
+
+                print(f"[LOOKUP] Searching DHT for chunk: {arg}")
+
+                try:
+                    result = asyncio.get_event_loop().run_until_complete(
+                        DHT_NODE.get(arg)
+                    )
+                except Exception as e:
+                    print(f"[LOOKUP] DHT error: {e}")
+                    continue
+
+                if not result:
+                    print("[LOOKUP] No node found for this chunk")
+                else:
+                    print("[LOOKUP RESULT]")
+                    print(f"- node_id : {result.get('node_id')}")
+                    print(f"- ip      : {result.get('ip')}")
+                    print(f"- port    : {result.get('port')}")
+
+                continue
+
+
+            
+
+            if cmd.lower() == "quit":
                 print("[INFO] Server shutting down...")
                 sys.exit(0)
             # Skip empty messages
@@ -194,8 +336,21 @@ def server_input():
 
 
 def main():
+    global DHT_NODE
     HOST = "0.0.0.0"
     PORT = 9000
+    DHT_PORT=8468
+    # start DHT (simple mode)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    DHT_NODE = KademliaNode("127.0.0.1", DHT_PORT)
+    loop.run_until_complete(DHT_NODE.start())
+    loop.run_until_complete(
+        DHT_NODE.bootstrap([("127.0.0.1", DHT_PORT)])
+    )
+
+    print("[DHT] Node started")
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
